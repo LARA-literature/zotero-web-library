@@ -12,6 +12,11 @@ import { pdfWorker } from '../common/pdf-worker.js';
 import { useFetchingState } from '../hooks';
 
 const PAGE_SIZE = 100;
+const READER_CONTENT_TYPES = {
+	'application/pdf': 'pdf',
+	'application/epub+zip': 'epub',
+	'text/html': 'snapshot',
+};
 
 const Reader = () => {
 	const dispatch = useDispatch();
@@ -42,13 +47,13 @@ const Reader = () => {
 		return totalResults === 0 && requestLK === libraryKey && queryOptions.itemKey === attachmentKey;
 	});
 
-	const [dataState, setDataState] = useState({ isReady: false, processedAnnotations: [], importedAnnotations: [] });
+	const [dataState, setDataState] = useState({ isReady: false, data: null, isFetchingData: false, processedAnnotations: [], importedAnnotations: [] });
 
 	const { isFetching, isFetched, pointer, keys } = useFetchingState(
 		['libraries', libraryKey, 'itemsByParent', attachmentKey]
 	);
 	const urlIsFresh = !!(url && (Date.now() - timestamp) < 60000);
-	const isAllFetched = isFetched && urlIsFresh;
+	const isAllFetched = isFetched && urlIsFresh && dataState.data;
 	const wasAllFetched = usePrevious(isAllFetched);
 
 	const annotations = (isFetched && keys ? keys : [])
@@ -79,57 +84,119 @@ const Reader = () => {
 		}
 	}, [annotations, attachmentItem, currentUser, dispatch, isGroup, isReadOnly, libraryKey, tagColors]);
 
-	const handleIframeMessage = useCallback(async (event) => {
-		if (event.source !== iframeRef.current.contentWindow) {
-			return;
-		}
-		const message = event.data;
-		switch (message.action) {
-			case 'initialized': {
-				return;
-			}
-			case 'loadExternalAnnotations': {
-				const importedAnnotations = (await pdfWorker.import(message.buf)).map(
-					ia => annotationItemToJSON(ia, { attachmentItem })
-				);
-				const allAnnotations = [...dataState.processedAnnotations, ...importedAnnotations];
-				iframeRef.current.contentWindow.postMessage({
-					action: 'setAnnotations',
-					annotations: allAnnotations
-				}, "*");
-				setDataState({ ...dataState, importedAnnotations });
-				return;
-			}
-			case 'save': {
-				const buf = await pdfWorker.export(message.buf, annotations);
-				const blob = new Blob([buf], { type: "application/pdf" });
-				const blobUrl = URL.createObjectURL(blob);
-				const fileName = attachmentItem?.filename || 'file.pdf';
-				saveAs(blobUrl, fileName);
-				return;
-			}
-			case 'setState': {
-				// message.state;
-				return;
-			}
-		}
-	}, [annotations, dataState, attachmentItem]);
+	const getData = useCallback(async () => {
+		setDataState(dataState => ({ ...dataState, isFetchingData: true, data }));
+		const data = await(await fetch(url)).arrayBuffer();
+		setDataState(dataState => ({ ...dataState, isFetchingData: false, data }));
+	}, [url]);
+
+	// const handleIframeMessage = useCallback(async (event) => {
+	// 	if (event.source !== iframeRef.current.contentWindow) {
+	// 		return;
+	// 	}
+	// 	const message = event.data;
+	// 	switch (message.action) {
+	// 		case 'initialized': {
+	// 			return;
+	// 		}
+	// 		case 'loadExternalAnnotations': {
+	// 			const importedAnnotations = (await pdfWorker.import(message.buf)).map(
+	// 				ia => annotationItemToJSON(ia, { attachmentItem })
+	// 			);
+	// 			const allAnnotations = [...dataState.processedAnnotations, ...importedAnnotations];
+	// 			iframeRef.current.contentWindow.postMessage({
+	// 				action: 'setAnnotations',
+	// 				annotations: allAnnotations
+	// 			}, "*");
+	// 			setDataState({ ...dataState, importedAnnotations });
+	// 			return;
+	// 		}
+	// 		case 'save': {
+	// 			const buf = await pdfWorker.export(message.buf, annotations);
+	// 			const blob = new Blob([buf], { type: "application/pdf" });
+	// 			const blobUrl = URL.createObjectURL(blob);
+	// 			const fileName = attachmentItem?.filename || 'file.pdf';
+	// 			saveAs(blobUrl, fileName);
+	// 			return;
+	// 		}
+	// 		case 'setState': {
+	// 			// message.state;
+	// 			return;
+	// 		}
+	// 	}
+	// }, [annotations, dataState, attachmentItem]);
 
 	const handleIframeLoaded = useCallback(() => {
-		iframeRef.current.contentWindow.addEventListener('message', handleIframeMessage);
-		iframeRef.current.contentWindow.postMessage({
-			action: 'open',
-			url,
+		console.log('create reader');
+		iframeRef.current.contentWindow.createReader({
+			type: READER_CONTENT_TYPES[attachmentItem.contentType],
+			data: { buf: dataState.data, baseURI: url },
 			annotations: dataState.processedAnnotations,
-			state: null, // Do we want to save PDF reader view state?
+			state: null,  // Do we want to save PDF reader view state?
+			secondaryViewState: null,
 			location: null, // Navigate to specific PDF part when opening it
-			readOnly: true,
+			readOnly: isReadOnly,
 			authorName: isGroup ? currentUserSlug : '',
-			sidebarWidth: 240, // Save sidebar width?
+			showItemPaneToggle: true, //  ???
+			sidebarWidth: 240,
 			sidebarOpen: true, // Save sidebar open/close state?
-			rtl: false // TODO: ?
-		}, "*");
-	}, [currentUserSlug, dataState, isGroup, handleIframeMessage, url])
+			bottomPlaceholderHeight: 0, /// ???
+			rtl: false, // TODO: ?
+			// localizedStrings:
+			showAnnotations: true,
+			onOpenContextMenu: (...args) => {
+				console.log('onOpenContextMenu', args);
+			},
+			onSaveAnnotations: (...args) => {
+				console.log('onSaveAnnotations', args);
+			},
+			onDeleteAnnotations: (...args) => {
+				console.log('onDeleteAnnotations', args);
+			},
+			onChangeViewState: (...args) => {
+				console.log('onChangeViewState', args);
+			},
+			onOpenTagsPopup: (...args) => {
+				console.log('onOpenTagsPopup', args);
+			},
+			onClosePopup: (...args) => {
+				console.log('onClosePopup', args);
+			},
+			onOpenLink: (...args) => {
+				console.log('onOpenLink', args);
+			},
+			onToggleSidebar: (...args) => {
+				console.log('onToggleSidebar', args);
+			},
+			onChangeSidebarWidth: (...args) => {
+				console.log('onChangeSidebarWidth', args);
+			},
+			onFocusSplitButton: (...args) => {
+				console.log('onFocusSplitButton', args);
+			},
+			onFocusContextPane: (...args) => {
+				console.log('onFocusContextPane', args);
+			},
+			onSetDataTransferAnnotations: (...args) => {
+				console.log('onSetDataTransferAnnotations', args);
+			},
+			onConfirm: (...args) => {
+				console.log('onConfirm', args);
+			},
+			onCopyImage: (...args) => {
+				console.log('onCopyImage', args);
+			},
+			onSaveImageAs: (...args) => {
+				console.log('onSaveImageAs', args);
+			},
+			onRotatePages: (...args) => {
+				console.log('onRotatePages', args);
+			},
+			onDeletePages: (...args) => {
+				console.log('onDeletePages', args);
+			},
+		});
+	}, [attachmentItem, dataState.data, dataState.processedAnnotations, url, isReadOnly, isGroup, currentUserSlug])
 
 	useEffect(() => {
 		if(attachmentKey && !attachmentItem) {
@@ -149,7 +216,13 @@ const Reader = () => {
 		if(!urlIsFresh && !isFetchingUrl) {
 			dispatch(tryGetAttachmentURL(attachmentKey));
 		}
-	}, [attachmentKey, attachmentItem, dispatch, isFetchingUrl, prevAttachmentItem, urlIsFresh]);
+	}, [attachmentKey, attachmentItem, dispatch, isFetchingUrl, prevAttachmentItem, urlIsFresh, dataState.data, getData]);
+
+	useEffect(() => {
+		if (urlIsFresh && !dataState.isFetchingData && !dataState.data) {
+			getData();
+		}
+	}, [dataState.data, dataState.isFetchingData, getData, urlIsFresh]);
 
 	useEffect(() => {
 		if(!dataState.isReady && isAllFetched && !wasAllFetched) {
@@ -174,9 +247,9 @@ const Reader = () => {
 
 	useEffect(() => {
 		if (attachmentItem && !prevAttachmentItem
-			&& (attachmentItem.itemType !== 'attachment' || attachmentItem.contentType !== 'application/pdf')
+			&& (attachmentItem.itemType !== 'attachment' || !Object.keys(READER_CONTENT_TYPES).includes(attachmentItem.contentType))
 		) {
-				dispatch(navigate({ view: 'item-details' }));
+			dispatch(navigate({ view: 'item-details' }));
 		}
 	}, [dispatch, attachmentItem, prevAttachmentItem]);
 
