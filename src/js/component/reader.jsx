@@ -1,7 +1,7 @@
 import { saveAs } from 'file-saver';
 import { useSelector, useDispatch } from 'react-redux';
 import deepEqual from 'deep-equal';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { usePrevious } from 'web-common/hooks';
 import { Spinner } from 'web-common/components';
 
@@ -18,6 +18,33 @@ const READER_CONTENT_TYPES = {
 	'application/epub+zip': 'epub',
 	'text/html': 'snapshot',
 };
+
+const UNFETCHED = 0, NOT_IMPORTED = 0;
+const FETCHING = 1, IMPORTING = 1;
+const FETCHED = 2, IMPORTED = 2;
+
+
+const readerReducer = (state, action) => {
+	console.log(action);
+	switch(action.type) {
+		case 'BEGIN_FETCH_DATA':
+			return { ...state, dataState: FETCHING };
+		case 'COMPLETE_FETCH_DATA':
+			return { ...state, dataState: FETCHED, data: action.data };
+		case 'ERROR_FETCH_DATA':
+			return { ...state, dataState: UNFETCHED, error: action.error };
+		default:
+		case 'BEGIN_IMPORT_ANNOTATIONS':
+			return { ...state, annotationsState: IMPORTING };
+		case 'COMPLETE_IMPORT_ANNOTATIONS':
+			return { ...state, annotationsState: IMPORTED, importedAnnotations: action.importedAnnotations };
+		case 'ERROR_IMPORT_ANNOTATIONS':
+			return { ...state, annotationsState: NOT_IMPORTED, error: action.error };
+		case 'READY':
+			return { ...state, isReady: true, processedAnnotations: action.processedAnnotations };
+	}
+}
+
 
 const Reader = () => {
 	const dispatch = useDispatch();
@@ -48,14 +75,21 @@ const Reader = () => {
 		return totalResults === 0 && requestLK === libraryKey && queryOptions.itemKey === attachmentKey;
 	});
 
-	const [dataState, setDataState] = useState({ isReady: false, data: null, isFetchingData: false, processedAnnotations: [], importedAnnotations: [] });
+	// const [dataState, setDataState] = useState({ isReady: false, data: null, isFetchingData: false, processedAnnotations: [], importedAnnotations: [] });
+	const [state, dispatchState] = useReducer(readerReducer, {
+		isReady: false,
+		data: null,
+		dataState: UNFETCHED,
+		annotationsState: NOT_IMPORTED,
+		importedAnnotations: [],
+		processedAnnotations: [],
+	});
+
 
 	const { isFetching, isFetched, pointer, keys } = useFetchingState(
 		['libraries', libraryKey, 'itemsByParent', attachmentKey]
 	);
 	const urlIsFresh = !!(url && (Date.now() - timestamp) < 60000);
-	const isAllFetched = isFetched && urlIsFresh && dataState.data;
-	const wasAllFetched = usePrevious(isAllFetched);
 
 	const annotations = (isFetched && keys ? keys : [])
 		.map(childItemKey => allItems[childItemKey])
@@ -70,10 +104,11 @@ const Reader = () => {
 		const tagColorsMap = new Map(tagColors.map(
 			({ name, color }, position) => ([name, { tag: name, color, position }]))
 		);
+		// @TODO: add mapping for Mendeley colors
 		try {
-			return annotations.map(a => {
-				const { createdByUser, lastModifiedByUser } = a?.[Symbol.for('meta')] ?? {};
-				return annotationItemToJSON(a, { attachmentItem, createdByUser, currentUser, isGroup, isReadOnly,
+			return annotations.map(annotation => {
+				const { createdByUser, lastModifiedByUser } = annotation?.[Symbol.for('meta')] ?? {};
+				return annotationItemToJSON(annotation, { attachmentItem, createdByUser, currentUser, isGroup, isReadOnly,
 					lastModifiedByUser, libraryKey, tagColors: tagColorsMap });
 			});
 		} catch (e) {
@@ -85,54 +120,12 @@ const Reader = () => {
 		}
 	}, [annotations, attachmentItem, currentUser, dispatch, isGroup, isReadOnly, libraryKey, tagColors]);
 
-	const getData = useCallback(async () => {
-		setDataState(dataState => ({ ...dataState, isFetchingData: true, data }));
-		const data = await(await fetch(url)).arrayBuffer();
-		setDataState(dataState => ({ ...dataState, isFetchingData: false, data }));
-	}, [url]);
-
-	// const handleIframeMessage = useCallback(async (event) => {
-	// 	if (event.source !== iframeRef.current.contentWindow) {
-	// 		return;
-	// 	}
-	// 	const message = event.data;
-	// 	switch (message.action) {
-	// 		case 'initialized': {
-	// 			return;
-	// 		}
-	// 		case 'loadExternalAnnotations': {
-	// 			const importedAnnotations = (await pdfWorker.import(message.buf)).map(
-	// 				ia => annotationItemToJSON(ia, { attachmentItem })
-	// 			);
-	// 			const allAnnotations = [...dataState.processedAnnotations, ...importedAnnotations];
-	// 			iframeRef.current.contentWindow.postMessage({
-	// 				action: 'setAnnotations',
-	// 				annotations: allAnnotations
-	// 			}, "*");
-	// 			setDataState({ ...dataState, importedAnnotations });
-	// 			return;
-	// 		}
-	// 		case 'save': {
-	// 			const buf = await pdfWorker.export(message.buf, annotations);
-	// 			const blob = new Blob([buf], { type: "application/pdf" });
-	// 			const blobUrl = URL.createObjectURL(blob);
-	// 			const fileName = attachmentItem?.filename || 'file.pdf';
-	// 			saveAs(blobUrl, fileName);
-	// 			return;
-	// 		}
-	// 		case 'setState': {
-	// 			// message.state;
-	// 			return;
-	// 		}
-	// 	}
-	// }, [annotations, dataState, attachmentItem]);
-
 	const handleIframeLoaded = useCallback(() => {
-		console.log('create reader');
+		console.log('create reader', state.data, url);
 		iframeRef.current.contentWindow.createReader({
 			type: READER_CONTENT_TYPES[attachmentItem.contentType],
-			data: { buf: dataState.data, baseURI: url },
-			annotations: dataState.processedAnnotations,
+			data: { buf: state.data, baseURI: url },
+			annotations: [...state.processedAnnotations, ...state.importedAnnotations],
 			state: null,  // Do we want to save PDF reader view state?
 			secondaryViewState: null,
 			location: null, // Navigate to specific PDF part when opening it
@@ -197,14 +190,16 @@ const Reader = () => {
 				console.log('onDeletePages', args);
 			},
 		});
-	}, [attachmentItem, dataState.data, dataState.processedAnnotations, url, isReadOnly, isGroup, currentUserSlug])
+	}, [attachmentItem, currentUserSlug, isGroup, isReadOnly, state.data, state.importedAnnotations, state.processedAnnotations, url])
 
+	// On first render, fetch attachment item details
 	useEffect(() => {
 		if(attachmentKey && !attachmentItem) {
 			dispatch(fetchItemDetails(attachmentKey));
 		}
 	}, []);// eslint-disable-line react-hooks/exhaustive-deps
 
+	// Fetch all child items (annotations). This effect will execute multiple times for each page of annotations
 	useEffect(() => {
 		if(!isFetching && !isFetched) {
 			const start = pointer || 0;
@@ -213,38 +208,53 @@ const Reader = () => {
 		}
 	}, [dispatch, attachmentKey, isFetching, isFetched, pointer]);
 
+	// Fetch attachment URL
 	useEffect(() => {
 		if(!urlIsFresh && !isFetchingUrl) {
 			dispatch(tryGetAttachmentURL(attachmentKey));
 		}
-	}, [attachmentKey, attachmentItem, dispatch, isFetchingUrl, prevAttachmentItem, urlIsFresh, dataState.data, getData]);
+	}, [attachmentKey, attachmentItem, dispatch, isFetchingUrl, prevAttachmentItem, urlIsFresh]);
+
+	// Fetch attachment binary data
+	useEffect(() => {
+		if (urlIsFresh && state.dataState === UNFETCHED) {
+			(async () => {
+				dispatchState({ type: 'BEGIN_FETCH_DATA' });
+				try {
+					const data = await (await fetch(url)).arrayBuffer();
+					dispatchState({ type: 'COMPLETE_FETCH_DATA', data });
+				} catch (e) {
+					dispatchState({ type: 'ERROR_FETCH_DATA', error: e });
+				}
+			})();
+		}
+	}, [state.dataState, url, urlIsFresh]);
+
+	// import external annotations
+	useEffect(() => {
+		if (attachmentItem && state.dataState === FETCHED && state.annotationsState === NOT_IMPORTED) {
+			(async () => {
+				dispatchState({ type: 'BEGIN_IMPORT_ANNOTATIONS' });
+				try {
+					// need to clone data before sending to worker, otherwise it will become detached
+					const clonedData = typeof structuredClone === 'function' ? structuredClone(state.data) : state.data.slice(0);
+					const importedAnnotations = (await pdfWorker.import(clonedData)).map(
+						ia => annotationItemToJSON(ia, { attachmentItem })
+					);
+					dispatchState({ type: 'COMPLETE_IMPORT_ANNOTATIONS', importedAnnotations });
+				} catch (e) {
+					dispatchState({ type: 'ERROR_IMPORT_ANNOTATIONS', error: e });
+				}
+			})();
+		}
+	}, [attachmentItem, state.annotationsState, state.data, state.dataState]);
 
 	useEffect(() => {
-		if (urlIsFresh && !dataState.isFetchingData && !dataState.data) {
-			getData();
-		}
-	}, [dataState.data, dataState.isFetchingData, getData, urlIsFresh]);
-
-	useEffect(() => {
-		if(!dataState.isReady && isAllFetched && !wasAllFetched) {
-			// pdf reader not yet loaded so we store processed annotations and begin pdf-reader loading
-			setDataState({
-				...dataState,
-				processedAnnotations: getProcessedAnnotations(),
-				isReady: true
-			});
-		}
-		if(dataState.isReady && ((isAllFetched && !wasAllFetched) || !deepEqual(prevAnnotations, annotations))) {
-			// pdf reader already loaded so just send updated annotations
+		if (!state.isReady && isFetched && state.data && state.annotationsState == IMPORTED) {
 			const processedAnnotations = getProcessedAnnotations();
-			const allAnnotations = [...processedAnnotations, ...dataState.importedAnnotations];
-			iframeRef.current.contentWindow.postMessage({
-				action: 'setAnnotations',
-				annotations: allAnnotations
-			}, "*");
-			setDataState({ ...dataState, processedAnnotations });
+			dispatchState({ type: 'READY', processedAnnotations });
 		}
-	}, [annotations, dataState, isAllFetched, getProcessedAnnotations, prevAnnotations, wasAllFetched])
+	}, [getProcessedAnnotations, isFetched, state.annotationsState, state.data, state.isReady]);
 
 	useEffect(() => {
 		if (attachmentItem && !prevAttachmentItem
@@ -260,9 +270,15 @@ const Reader = () => {
 		}
 	}, [dispatch, lastFetchItemDetailsNoResults]);
 
+	useEffect(() => {
+		if (state.isReady && !deepEqual(prevAnnotations, annotations)) {
+			console.warn('annotations changed after ready');
+		}
+	}, [annotations, prevAnnotations, state.isReady]);
+
 	return (
 		<section className="reader-wrapper">
-			{ dataState.isReady ?
+			{ state.isReady ?
 				<iframe onLoad={ handleIframeLoaded } ref={ iframeRef } src={ pdfReaderURL } /> :
 				<div className="spinner-wrapper">
 					<Spinner />
