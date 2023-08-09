@@ -10,6 +10,7 @@ import { ERROR_PROCESSING_ANNOTATIONS } from '../constants/actions';
 import { fetchChildItems, fetchItemDetails, navigate, tryGetAttachmentURL } from '../actions';
 import { pdfWorker } from '../common/pdf-worker.js';
 import { useFetchingState } from '../hooks';
+import { strings } from '../constants/strings.js';
 
 const PAGE_SIZE = 100;
 const READER_CONTENT_TYPES = {
@@ -142,7 +143,7 @@ const Reader = () => {
 			sidebarOpen: true, // Save sidebar open/close state?
 			bottomPlaceholderHeight: 0, /// ???
 			rtl: false, // TODO: ?
-			// localizedStrings:
+			localizedStrings: strings,
 			showAnnotations: true,
 			onOpenContextMenu: (...args) => {
 				console.log('onOpenContextMenu', args);
