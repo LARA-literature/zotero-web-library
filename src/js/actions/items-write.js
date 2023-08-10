@@ -113,9 +113,10 @@ const postItemsMultiPatch = async (state, multiPatch, libraryKey = null) => {
 	};
 }
 
-const createItems = (items, libraryKey) => {
+const createItems = (items, libraryKey = null) => {
 	return async (dispatch, getState) => {
 		const state = getState();
+		libraryKey = libraryKey ?? state.current.libraryKey;
 		const config = state.config;
 
 		dispatch({
@@ -137,7 +138,7 @@ const createItems = (items, libraryKey) => {
 			const createdItems = extractItems(response, state);
 
 			//@TODO: refactor
-			const otherItems = state.libraries[libraryKey] ? state.libraries[libraryKey].items : [];
+			const otherItems = state.libraries[libraryKey] ? state.libraries[libraryKey].items : {};
 
 			dispatch({
 				type: RECEIVE_CREATE_ITEMS,
@@ -1347,7 +1348,7 @@ const createAttachments = (filesData, { linkMode = 'imported_file', collection =
 
 		try {
 			const attachmentTemplate = await dispatch(
-				fetchItemTemplate('attachment', { linkMode })
+				fetchItemTemplate('attachment', linkMode)
 			);
 			const attachmentItems = filesData.map(fd => ({
 				...attachmentTemplate,
@@ -1404,7 +1405,7 @@ const createLinkedUrlAttachments = (linkedUrlItems, { collection = null, parentI
 		}
 
 		const attachmentTemplate = await dispatch(
-			fetchItemTemplate('attachment', { linkMode: 'linked_url' })
+			fetchItemTemplate('attachment', 'linked_url')
 		);
 		const attachmentItems = linkedUrlItems.map(({ url, title = '' }) => ({
 			...attachmentTemplate,
@@ -1460,5 +1461,6 @@ export {
 	toggleTagsOnItems,
 	updateItem,
 	updateItemWithMapping,
+	updateMultipleItems,
 	uploadAttachment,
 };
