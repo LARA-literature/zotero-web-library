@@ -10,6 +10,21 @@
 		justify-content: center;
 	}
 
+	.portal {
+		position: absolute;
+		inset: 0;
+	}
+
+	.dropdown {
+		.dropdown-item {
+			.icon {
+				vertical-align: baseline;
+				margin-right: $space-min;
+
+			}
+		}
+	}
+
 	> iframe {
 		border: none;
 		flex: 1 1 100%;
