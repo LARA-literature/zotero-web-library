@@ -121,7 +121,7 @@ const readerReducer = (state, action) => {
 		case 'ERROR_IMPORT_ANNOTATIONS':
 			return { ...state, annotationsState: NOT_IMPORTED, error: action.error };
 		case 'READY':
-			return { ...state, isReady: true, processedAnnotations: action.processedAnnotations };
+			return { ...state, isReady: true };
 	}
 }
 
@@ -129,6 +129,7 @@ const readerReducer = (state, action) => {
 const Reader = () => {
 	const dispatch = useDispatch();
 	const iframeRef = useRef(null);
+	const reader = useRef(null);
 	const libraryKey = useSelector(state => state.current.libraryKey);
 	const attachmentKey = useSelector(state => {
 		if (state.current.attachmentKey) {
@@ -160,8 +161,7 @@ const Reader = () => {
 		data: null,
 		dataState: UNFETCHED,
 		annotationsState: NOT_IMPORTED,
-		importedAnnotations: [],
-		processedAnnotations: [],
+		importedAnnotations: []
 	});
 
 	const [tagPicker, setTagPicker] = useState(null);
@@ -185,7 +185,7 @@ const Reader = () => {
 		setTagPicker(null);
 	}, []);
 
-	const getProcessedAnnotations = useCallback(() => {
+	const getProcessedAnnotations = useCallback((annotations) => {
 		const tagColorsMap = new Map(tagColors.map(
 			({ name, color }, position) => ([name, { tag: name, color, position }]))
 		);
@@ -205,13 +205,14 @@ const Reader = () => {
 			});
 			console.error(e);
 		}
-	}, [annotations, attachmentItem, currentUser, dispatch, isGroup, isReadOnly, libraryKey, tagColors]);
+	}, [attachmentItem, currentUser, dispatch, isGroup, isReadOnly, libraryKey, tagColors]);
 
 	const handleIframeLoaded = useCallback(() => {
-		iframeRef.current.contentWindow.createReader({
+		const processedAnnotations = getProcessedAnnotations(annotations);
+		reader.current = iframeRef.current.contentWindow.createReader({
 			type: READER_CONTENT_TYPES[attachmentItem.contentType],
 			data: { buf: state.data, baseURI: url },
-			annotations: [...state.processedAnnotations, ...state.importedAnnotations],
+			annotations: [...processedAnnotations, ...state.importedAnnotations],
 			state: null,  // Do we want to save PDF reader view state?
 			secondaryViewState: null,
 			location: null, // Navigate to specific PDF part when opening it
@@ -278,7 +279,7 @@ const Reader = () => {
 				console.log('onDeletePages', args);
 			},
 		});
-	}, [attachmentItem, attachmentKey, currentUserSlug, dispatch, isGroup, isReadOnly, state.data, state.importedAnnotations, state.processedAnnotations, url])
+	}, [annotations, attachmentItem, attachmentKey, currentUserSlug, dispatch, getProcessedAnnotations, isGroup, isReadOnly, state.data, state.importedAnnotations, url])
 
 	// On first render, fetch attachment item details
 	useEffect(() => {
@@ -339,10 +340,9 @@ const Reader = () => {
 
 	useEffect(() => {
 		if (!state.isReady && isFetched && state.data && state.annotationsState == IMPORTED) {
-			const processedAnnotations = getProcessedAnnotations();
-			dispatchState({ type: 'READY', processedAnnotations });
+			dispatchState({ type: 'READY' });
 		}
-	}, [getProcessedAnnotations, isFetched, state.annotationsState, state.data, state.isReady]);
+	}, [isFetched, state.annotationsState, state.data, state.isReady]);
 
 	useEffect(() => {
 		if (attachmentItem && !prevAttachmentItem
@@ -360,9 +360,12 @@ const Reader = () => {
 
 	useEffect(() => {
 		if (state.isReady && !deepEqual(prevAnnotations, annotations)) {
-			console.warn('annotations changed after ready');
+			const changedAnnotations = annotations.filter(a => {
+				return !deepEqual(a, prevAnnotations.find(pa => pa.key === a.key))
+			});
+			reader.current.setAnnotations(getProcessedAnnotations(changedAnnotations));
 		}
-	}, [annotations, prevAnnotations, state.isReady]);
+	}, [annotations, getProcessedAnnotations, prevAnnotations, state.importedAnnotations, state.isReady]);
 
 	return (
 		<section className="reader-wrapper">
