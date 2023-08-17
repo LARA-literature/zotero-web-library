@@ -15,6 +15,15 @@
 		inset: 0;
 	}
 
+	.popup {
+		background-color: $popover-bg;
+		border-radius: $reader-popup-border-radius;
+		box-shadow: $reader-popup-shadow;
+		padding: $reader-popup-padding;
+		min-width: 214px;
+		min-height: 60px;
+	}
+
 	.dropdown {
 		.dropdown-item {
 			.icon {

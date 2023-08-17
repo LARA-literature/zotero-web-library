@@ -1,21 +1,21 @@
-import cx from 'classnames';
-import { saveAs } from 'file-saver';
 import { useSelector, useDispatch } from 'react-redux';
 import deepEqual from 'deep-equal';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { usePrevious } from 'web-common/hooks';
+import { pick } from 'web-common/utils';
 import { DropdownContext, DropdownMenu, DropdownItem, Icon, Spinner } from 'web-common/components';
 import { useFloating, offset, flip, shift, autoUpdate } from '@floating-ui/react-dom';
 
 import { annotationItemToJSON } from '../common/annotations.js';
 import { ERROR_PROCESSING_ANNOTATIONS } from '../constants/actions';
 import {
-	fetchChildItems, fetchItemDetails, navigate, tryGetAttachmentURL,
+	deleteItems, fetchChildItems, fetchItemDetails, navigate, tryGetAttachmentURL,
 	postAnnotationsFromReader
 } from '../actions';
 import { pdfWorker } from '../common/pdf-worker.js';
 import { useFetchingState } from '../hooks';
 import { strings } from '../constants/strings.js';
+import TagPicker from './item-details/tag-picker.jsx';
 
 const PAGE_SIZE = 100;
 const READER_CONTENT_TYPES = {
@@ -28,15 +28,18 @@ const UNFETCHED = 0, NOT_IMPORTED = 0;
 const FETCHING = 1, IMPORTING = 1;
 const FETCHED = 2, IMPORTED = 2;
 
-const Portal = ({ isOpen, setContext, children }) => {
-	const handleClose = useCallback(() => {
-		setContext(null);
-	}, [setContext]);
+const Portal = ({ onClose, children }) => {
+	const ref = useRef(null);
+	const handleClick = useCallback(ev => {
+		if (ev.target === ref.current) {
+			onClose();
+		}
+	}, [onClose]);
 
 	return <div
+		ref={ref}
 		className="portal"
-		style={{ pointerEvents: isOpen ? null : 'none' }}
-		onClick={handleClose}
+		onClick={handleClick}
 	>
 		{children}
 	</div>;
@@ -46,68 +49,57 @@ const Overlay = ({ children }) => {
 	return <div className="overlay">{children}</div>;
 };
 
-const ContextMenuPortal = ({ context, setContext }) => {
+
+const PopupPortal = ({ anchor, children, onClose }) => {
 	const { x, y, refs, strategy, update } = useFloating({
 		placement: 'bottom-start', middleware: [shift()]
 	});
-	const isOpen = context !== null;
+	const isOpen = children !== null;
 
-	const options = useMemo(() =>
-		(context?.itemGroups ?? [])
-			.map((group, i) => ([
-				...group.map(item => (
-					<DropdownItem
-						onClick={item.onCommand}
-						key={item.label}
-					>
-						{item.color && (
-							<Icon
-								aria-role="presentation"
-								type="12/square"
-								symbol="square"
-								width={10}
-								height={10}
-								style={{ color: item.color }}
-							/>
-						)}
-						{item.label}
-					</DropdownItem>
-				)),
-				...(i < context.itemGroups.length - 1 ? [<DropdownItem key={`group-${i}`} divider />] : [])
-			]))
-			.flat()
-		, [context]);
+	// const options = useMemo(() =>
+	// 	(context?.itemGroups ?? [])
+	// 		.map((group, i) => ([
+	// 			...group.map(item => (
+	// 				<DropdownItem
+	// 					onClick={item.onCommand}
+	// 					key={item.label}
+	// 				>
+	// 					{item.color && (
+	// 						<Icon
+	// 							aria-role="presentation"
+	// 							type="12/square"
+	// 							symbol="square"
+	// 							width={10}
+	// 							height={10}
+	// 							style={{ color: item.color }}
+	// 						/>
+	// 					)}
+	// 					{item.label}
+	// 				</DropdownItem>
+	// 			)),
+	// 			...(i < context.itemGroups.length - 1 ? [<DropdownItem key={`group-${i}`} divider />] : [])
+	// 		]))
+	// 		.flat()
+	// 	, [context]);
 
-	const handleToggle = useCallback(ev => {
-		setContext(false)
-	}, [setContext]);
 
 	useLayoutEffect(() => {
-		if (context !== null) {
+		if (children !== null) {
 			update();
 		}
 	});
 
 	return (
-		<DropdownContext.Provider
-			value={{ handleToggle, isOpen, x, y, refs, strategy, update, isReady: true }}>
-			<Portal isOpen={isOpen} setContext={setContext}>
-				{isOpen && (
-					<Overlay>
-						<div className="anchor" ref={refs.setReference} style={{ position: 'absolute', left: context.x, top: context.y }} />
-						<div
-							className={cx('dropdown', {
-								'show': isOpen,
-							})}
-						>
-							<DropdownMenu>
-								{options}
-							</DropdownMenu>
-						</div>
-					</Overlay>
-				)}
-			</Portal>
-		</DropdownContext.Provider>
+		<Portal onClose={ onClose }>
+			{isOpen && (
+				<Overlay>
+					<div className="anchor" ref={refs.setReference} style={{ position: 'absolute', left: anchor.x, top: anchor.y }} />
+					<div className="popup" ref={refs.setFloating} style={{ position: strategy, transform: `translate3d(${x}px, ${y}px, 0px)` }}>
+						{ children }
+					</div>
+				</Overlay>
+			)}
+		</Portal>
 	);
 }
 
@@ -172,7 +164,8 @@ const Reader = () => {
 		processedAnnotations: [],
 	});
 
-	const [context, setContext] = useState(null);
+	const [tagPicker, setTagPicker] = useState(null);
+	const anchor = tagPicker ? pick(tagPicker, ['x', 'y']) : null;
 
 	const { isFetching, isFetched, pointer, keys } = useFetchingState(
 		['libraries', libraryKey, 'itemsByParent', attachmentKey]
@@ -187,6 +180,10 @@ const Reader = () => {
 	const currentUser = useMemo(() => (
 		{ id: currentUserID, username: currentUserSlug }
 	), [currentUserID, currentUserSlug]);
+
+	const handleClose = useCallback(() => {
+		setTagPicker(null);
+	}, []);
 
 	const getProcessedAnnotations = useCallback(() => {
 		const tagColorsMap = new Map(tagColors.map(
@@ -227,27 +224,24 @@ const Reader = () => {
 			rtl: false, // TODO: ?
 			localizedStrings: strings,
 			showAnnotations: true,
-			onOpenContextMenu: (contextData) => {
-				if (!contextData.internal) {
-					return;
-				}
-				setContext(contextData);
-				console.log('onOpenContextMenu', contextData);
-			},
 			onSaveAnnotations: (annotations) => {
 				console.log('onSaveAnnotations', annotations);
 				dispatch(postAnnotationsFromReader(annotations, attachmentKey));
 			},
-			onDeleteAnnotations: (...args) => {
-				console.log('onDeleteAnnotations', args);
+			onDeleteAnnotations: (annotationIds) => {
+				dispatch(deleteItems(annotationIds));
 			},
 			onChangeViewState: (...args) => {
 				console.log('onChangeViewState', args);
 			},
-			onOpenTagsPopup: (...args) => {
-				console.log('onOpenTagsPopup', args);
+			onOpenTagsPopup: (key, x, y) => {
+				setTagPicker({ key, x, y});
+				console.log('onOpenTagsPopup', { key, x, y });
 			},
 			onClosePopup: (...args) => {
+				// Note: This currently only closes tags popup when annotations are
+				// disappearing from pdf-reader sidebar
+				setTagPicker(null);
 				console.log('onClosePopup', args);
 			},
 			onOpenLink: (...args) => {
@@ -284,7 +278,7 @@ const Reader = () => {
 				console.log('onDeletePages', args);
 			},
 		});
-	}, [attachmentItem, currentUserSlug, isGroup, isReadOnly, state.data, state.importedAnnotations, state.processedAnnotations, url])
+	}, [attachmentItem, attachmentKey, currentUserSlug, dispatch, isGroup, isReadOnly, state.data, state.importedAnnotations, state.processedAnnotations, url])
 
 	// On first render, fetch attachment item details
 	useEffect(() => {
@@ -375,7 +369,11 @@ const Reader = () => {
 			{state.isReady ? (
 				<>
 					<iframe onLoad={handleIframeLoaded} ref={iframeRef} src={pdfReaderURL} />
-					<ContextMenuPortal context={context} setContext={setContext} />
+					{ tagPicker && (
+						<PopupPortal anchor={ anchor } onClose={ handleClose }>
+							{ tagPicker && <TagPicker itemKey={ tagPicker.key } libraryKey={ libraryKey } /> }
+						</PopupPortal>
+					) }
 				</>
 			) : (
 				<div className="spinner-wrapper">
