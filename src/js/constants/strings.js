@@ -83,4 +83,5 @@ export const strings = {
 	'pdfReader.includeAnnotations': 'Include annotations',
 	'pdfReader.preparingDocumentForPrinting': 'Preparing document for printing…',
 	'pdfReader.phraseNotFound': 'Phrase not found',
+	'pdfReader.deleteAnnotation.plural': 'Are you sure you want to delete the selected annotations?'
 };

@@ -238,13 +238,14 @@ const Reader = () => {
 				console.log('onOpenTagsPopup', { key, x, y });
 			},
 			onClosePopup: (...args) => {
-				// Note: This currently only closes tags popup when annotations are
-				// disappearing from pdf-reader sidebar
+				// Note: This currently only closes tags popup when annotations are disappearing from pdf-reader sidebar.
+				// Normal popup closing is handled by PopupPortal.
 				setTagPicker(null);
 				console.log('onClosePopup', args);
 			},
-			onOpenLink: (...args) => {
-				console.log('onOpenLink', args);
+			onOpenLink: (url) => {
+				window.open(url);
+				console.log('onOpenLink', url);
 			},
 			onToggleSidebar: (...args) => {
 				console.log('onToggleSidebar', args);
@@ -252,17 +253,13 @@ const Reader = () => {
 			onChangeSidebarWidth: (...args) => {
 				console.log('onChangeSidebarWidth', args);
 			},
-			onFocusSplitButton: (...args) => {
-				console.log('onFocusSplitButton', args);
-			},
-			onFocusContextPane: (...args) => {
-				console.log('onFocusContextPane', args);
-			},
 			onSetDataTransferAnnotations: (...args) => {
 				console.log('onSetDataTransferAnnotations', args);
 			},
-			onConfirm: (...args) => {
-				console.log('onConfirm', args);
+			onConfirm: (title, text, confirmationButtonTitle) => {
+				console.log('onConfirm', { title, text, confirmationButtonTitle });
+				// todo: consider an async-capable api in reader and a nicer confirmation dialog
+				return window.confirm(strings[text] ?? text);
 			},
 			onCopyImage: (...args) => {
 				console.log('onCopyImage', args);
