@@ -16,13 +16,9 @@ import { pdfWorker } from '../common/pdf-worker.js';
 import { useFetchingState } from '../hooks';
 import { strings } from '../constants/strings.js';
 import TagPicker from './item-details/tag-picker.jsx';
+import { READER_CONTENT_TYPES } from '../constants/reader.js';
 
 const PAGE_SIZE = 100;
-const READER_CONTENT_TYPES = {
-	'application/pdf': 'pdf',
-	'application/epub+zip': 'epub',
-	'text/html': 'snapshot',
-};
 
 const UNFETCHED = 0, NOT_IMPORTED = 0;
 const FETCHING = 1, IMPORTING = 1;
@@ -120,6 +116,8 @@ const readerReducer = (state, action) => {
 			return { ...state, annotationsState: IMPORTED, importedAnnotations: action.importedAnnotations };
 		case 'ERROR_IMPORT_ANNOTATIONS':
 			return { ...state, annotationsState: NOT_IMPORTED, error: action.error };
+		case 'SKIP_IMPORT_ANNOTATIONS':
+			return { ...state, annotationsState: IMPORTED };
 		case 'READY':
 			return { ...state, isReady: true };
 	}
@@ -324,6 +322,10 @@ const Reader = () => {
 		if (attachmentItem && state.dataState === FETCHED && state.annotationsState === NOT_IMPORTED) {
 			(async () => {
 				dispatchState({ type: 'BEGIN_IMPORT_ANNOTATIONS' });
+				if (attachmentItem.contentType !== 'application/pdf') {
+					dispatchState({ type: 'SKIP_IMPORT_ANNOTATIONS' });
+					return;
+				}
 				try {
 					// need to clone data before sending to worker, otherwise it will become detached
 					const clonedData = typeof structuredClone === 'function' ? structuredClone(state.data) : state.data.slice(0);
