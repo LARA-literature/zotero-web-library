@@ -149,6 +149,10 @@ const Reader = () => {
 	const tagColors = useSelector(state => state.libraries[libraryKey]?.tagColors?.value ?? {});
 	const { isGroup, isReadOnly } = useSelector(state => state.config.libraries.find(l => l.key === libraryKey));
 	const pdfReaderURL = useSelector(state => state.config.pdfReaderURL);
+	const isCreating = Object.keys(useSelector(state => state.libraries[libraryKey]?.creating?.items)).length > 0;
+	const isUpdating = Object.keys(useSelector(state => state.libraries[libraryKey]?.updating?.items)).length > 0;
+	const isBusy = isCreating || isUpdating;
+	const wasBusy = usePrevious(isBusy);
 	const lastFetchItemDetailsNoResults = useSelector(state => {
 		const { libraryKey: requestLK, totalResults, queryOptions = {} } = state.traffic?.['FETCH_ITEM_DETAILS']?.last ?? {};
 		return totalResults === 0 && requestLK === libraryKey && queryOptions.itemKey === attachmentKey;
@@ -358,13 +362,16 @@ const Reader = () => {
 	}, [dispatch, lastFetchItemDetailsNoResults]);
 
 	useEffect(() => {
-		if (state.isReady && !deepEqual(prevAnnotations, annotations)) {
+		if (state.isReady && (!deepEqual(prevAnnotations, annotations) || (wasBusy && !isBusy))) {
+			if (isBusy) {
+				return;
+			}
 			const changedAnnotations = annotations.filter(a => {
 				return !deepEqual(a, prevAnnotations.find(pa => pa.key === a.key))
 			});
 			reader.current.setAnnotations(getProcessedAnnotations(changedAnnotations));
 		}
-	}, [annotations, getProcessedAnnotations, prevAnnotations, state.importedAnnotations, state.isReady]);
+	}, [annotations, getProcessedAnnotations, isBusy, prevAnnotations, state.importedAnnotations, state.isReady, wasBusy]);
 
 	return (
 		<section className="reader-wrapper">
