@@ -21,6 +21,7 @@ import {
 	ERROR_DELETE_ITEM,
 	ERROR_DELETE_ITEMS,
 	ERROR_MOVE_ITEMS_TRASH,
+	ERROR_PATCH_ATTACHMENT,
 	ERROR_RECOVER_ITEMS_TRASH,
 	ERROR_REGISTER_FILE_ATTACHMENTS,
 	ERROR_REMOVE_ITEMS_FROM_COLLECTION,
@@ -33,6 +34,7 @@ import {
 	PRE_CREATE_ITEMS,
 	PRE_DELETE_ITEMS,
 	PRE_MOVE_ITEMS_TRASH,
+	PRE_PATCH_ATTACHMENT,
 	PRE_RECOVER_ITEMS_TRASH,
 	PRE_REMOVE_ITEMS_FROM_COLLECTION,
 	PRE_STORE_RELATIONS_IN_SOURCE,
@@ -45,6 +47,7 @@ import {
 	RECEIVE_DELETE_ITEM,
 	RECEIVE_DELETE_ITEMS,
 	RECEIVE_MOVE_ITEMS_TRASH,
+	RECEIVE_PATCH_ATTACHMENT,
 	RECEIVE_RECOVER_ITEMS_TRASH,
 	RECEIVE_REGISTER_FILE_ATTACHMENTS,
 	RECEIVE_REMOVE_ITEMS_FROM_COLLECTION,
@@ -59,6 +62,7 @@ import {
 	REQUEST_DELETE_ITEM,
 	REQUEST_DELETE_ITEMS,
 	REQUEST_MOVE_ITEMS_TRASH,
+	REQUEST_PATCH_ATTACHMENT,
 	REQUEST_RECOVER_ITEMS_TRASH,
 	REQUEST_REGISTER_FILE_ATTACHMENTS,
 	REQUEST_REMOVE_ITEMS_FROM_COLLECTION,
@@ -547,6 +551,79 @@ const uploadAttachment = (itemKey, fileData, libraryKey) => {
 				error,
 			});
 			throw error;
+		}
+	};
+}
+
+const patchAttachment = (itemKey, newFileBuf, patchBuf, libraryKey = null) => {
+	return async (dispatch, getState) => {
+		libraryKey = libraryKey ?? getState().current.libraryKey;
+		const id = requestTracker.id++;
+
+		dispatch({
+			type: PRE_PATCH_ATTACHMENT,
+			itemKey,
+			newFileBuf,
+			patchBuf,
+			libraryKey
+		});
+
+		dispatch(
+			queuePatchAttachment(itemKey, newFileBuf, patchBuf, libraryKey, id)
+		);
+	};
+}
+
+const queuePatchAttachment = (itemKey, newFileBuf, patchBuf, libraryKey, id) => {
+	return {
+		queue: libraryKey,
+		callback: async (next, dispatch, getState) => {
+			const state = getState();
+			const { md5, filename: fileName } = state.libraries[libraryKey]?.items[itemKey] ?? {};
+			const config = state.config;
+			dispatch({
+				type: REQUEST_PATCH_ATTACHMENT,
+				libraryKey,
+				itemKey,
+				md5,
+				fileName,
+				patchBuf,
+				id
+			});
+
+			console.log({ fileName, md5 });
+			try {
+				let response = await api(config.apiKey, config.apiConfig)
+					.library(libraryKey)
+					.items(itemKey)
+					.attachment(fileName, newFileBuf, null, md5, patchBuf, 'xdelta')
+					.patch();
+
+				dispatch({
+					type: RECEIVE_PATCH_ATTACHMENT,
+					libraryKey,
+					itemKey,
+					response,
+					md5,
+					fileName,
+					patchBuf,
+					id
+				});
+			} catch (error) {
+				dispatch({
+					type: ERROR_PATCH_ATTACHMENT,
+					libraryKey,
+					itemKey,
+					error,
+					md5,
+					fileName,
+					patchBuf,
+					id
+				});
+				throw error;
+			} finally {
+				next();
+			}
 		}
 	};
 }
@@ -1525,6 +1602,7 @@ export {
 	deleteItem,
 	deleteItems,
 	moveToTrash,
+	patchAttachment,
 	recoverFromTrash,
 	removeFromCollection,
 	removeRelatedItem,
