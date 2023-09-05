@@ -10,7 +10,7 @@ import { annotationItemToJSON } from '../common/annotations.js';
 import { ERROR_PROCESSING_ANNOTATIONS } from '../constants/actions';
 import {
 	deleteItems, fetchChildItems, fetchItemDetails, navigate, tryGetAttachmentURL,
-	patchAttachment, postAnnotationsFromReader
+	patchAttachment, postAnnotationsFromReader, uploadAttachment
 } from '../actions';
 import { pdfWorker } from '../common/pdf-worker.js';
 import { useFetchingState } from '../hooks';
@@ -252,8 +252,14 @@ const Reader = () => {
 		reader.current.reload({ buf: cloneData(modifiedBuf), baseURI: url });
 		reader.current.unfreeze();
 		dispatchState({ type: 'ROTATED_PAGES', data: cloneData(modifiedBuf) });
-		const diff = await computeDiffUsingWorker(oldBuf, modifiedBuf);
-		dispatch(patchAttachment(attachmentItem.key, modifiedBuf, diff));
+		try {
+			const diff = await computeDiffUsingWorker(oldBuf, modifiedBuf);
+			dispatch(patchAttachment(attachmentItem.key, modifiedBuf, diff));
+		} catch(e) {
+			dispatch(uploadAttachment(
+				attachmentItem.key, { fileName: attachmentItem.filename, file: cloneData(modifiedBuf) })
+			);
+		}
 	}, [attachmentItem, dispatch, url]);
 
 	const handleIframeLoaded = useCallback(() => {

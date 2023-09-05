@@ -40,6 +40,7 @@ import {
 	PRE_STORE_RELATIONS_IN_SOURCE,
 	PRE_UPDATE_ITEM,
 	PRE_UPDATE_MULTIPLE_ITEMS,
+	PRE_UPLOAD_ATTACHMENT,
 	RECEIVE_ADD_ITEMS_TO_COLLECTION,
 	RECEIVE_ADD_TAGS_TO_ITEMS,
 	RECEIVE_CREATE_ITEM,
@@ -515,44 +516,72 @@ const queueUpdateMultipleItems = (multiPatch, libraryKey, id, resolve, reject) =
 	};
 }
 
-
-const uploadAttachment = (itemKey, fileData, libraryKey) => {
+const uploadAttachment = (itemKey, fileData, libraryKey = null) => {
 	return async (dispatch, getState) => {
-		const state = getState();
-		const config = state.config;
-		dispatch({
-			type: REQUEST_UPLOAD_ATTACHMENT,
-			libraryKey,
-			itemKey,
-			fileData,
+		libraryKey = libraryKey ?? getState().current.libraryKey;
+		const id = requestTracker.id++;
+
+		return new Promise((resolve, reject) => {
+			dispatch({
+				type: PRE_UPLOAD_ATTACHMENT,
+				itemKey,
+				fileData,
+				libraryKey
+			});
+
+			dispatch(
+				queueUploadAttachment(itemKey, fileData, libraryKey, { resolve, reject, id })
+			);
 		});
-
-		try {
-			let response = await api(config.apiKey, config.apiConfig)
-				.library(libraryKey)
-				.items(itemKey)
-				.attachment(fileData.fileName, fileData.file)
-				.post();
-
-
-			dispatch({
-				type: RECEIVE_UPLOAD_ATTACHMENT,
-				libraryKey,
-				itemKey,
-				fileData,
-				response,
-			});
-		} catch(error) {
-			dispatch({
-				type: ERROR_UPLOAD_ATTACHMENT,
-				libraryKey,
-				itemKey,
-				fileData,
-				error,
-			});
-			throw error;
-		}
 	};
+}
+
+const queueUploadAttachment = (itemKey, fileData, libraryKey, { resolve, reject, id }) => {
+	return {
+		queue: libraryKey,
+		callback: async (next, dispatch, getState) => {
+			const state = getState();
+			const { md5, filename: fileName } = state.libraries[libraryKey]?.items[itemKey] ?? {};
+			const config = state.config;
+			dispatch({
+				type: REQUEST_UPLOAD_ATTACHMENT,
+				libraryKey,
+				itemKey,
+				fileData,
+				id
+			});
+			console.log({ fileName, md5 });
+
+			try {
+				let response = await api(config.apiKey, config.apiConfig)
+					.library(libraryKey)
+					.items(itemKey)
+					.attachment(fileData.fileName ?? fileName, fileData.file, null, md5)
+					.post();
+
+
+				dispatch({
+					type: RECEIVE_UPLOAD_ATTACHMENT,
+					libraryKey,
+					itemKey,
+					fileData,
+					response,
+				});
+				resolve();
+			} catch(error) {
+				dispatch({
+					type: ERROR_UPLOAD_ATTACHMENT,
+					libraryKey,
+					itemKey,
+					fileData,
+					error,
+				});
+				reject(error);
+			} finally {
+				next();
+			}
+		}
+	}
 }
 
 const patchAttachment = (itemKey, newFileBuf, patchBuf, libraryKey = null) => {
