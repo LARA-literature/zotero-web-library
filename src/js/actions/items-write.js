@@ -550,7 +550,6 @@ const queueUploadAttachment = (itemKey, fileData, libraryKey, { resolve, reject,
 				fileData,
 				id
 			});
-			console.log({ fileName, md5 });
 
 			try {
 				let response = await api(config.apiKey, config.apiConfig)
